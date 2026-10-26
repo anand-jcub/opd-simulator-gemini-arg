@@ -1,0 +1,1991 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>3D Hospital OPD Simulator: Current vs Proposed</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<style>
+  :root {
+    --bg: #f4f6f9; --card: #ffffff; --line: #e2e6ec; --text: #1e293b; --muted: #64748b;
+    --cur: #c85a4f; --prop: #1f8a7e; --appt: #3b6fd8; --walk: #c2621f; --walkpin: #e89b48;
+    --good: #268452; --bad: #c0392b; --jv: #6b5b95;
+    --s: 12px; --m: 14px; --l: 22px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 400 var(--m)/1.5 "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  .wrap { max-width: 1920px; margin: 0 auto; padding: 10px 20px 36px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+  .muted { color: var(--muted); }
+  .small { font-size: var(--s); }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* Topbar */
+  .topbar {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 12px; padding: 4px 0 10px; border-bottom: 1px solid var(--line);
+  }
+  .brand {
+    font-size: var(--s); font-weight: 700; color: var(--muted);
+    letter-spacing: .05em; text-transform: uppercase; display: flex; align-items: center; gap: 8px;
+  }
+  .badge-fix {
+    background: #e3f2ef; color: var(--prop); padding: 2px 8px;
+    border-radius: 99px; font-size: 11px; font-weight: 600; text-transform: none; letter-spacing: 0;
+  }
+  .transport { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .clock-t { font-size: var(--m); font-weight: 600; min-width: 74px; }
+  .prog { width: 96px; height: 5px; background: var(--line); border-radius: 4px; overflow: hidden; }
+  .prog > div { height: 100%; background: var(--prop); width: 0; transition: width 0.1s linear; }
+  #simStatusDot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); }
+  #simStatusDot.paused { background: #94a3b8; }
+
+  button, select {
+    font: inherit; font-size: var(--s); color: var(--text); background: var(--card);
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 11px; cursor: pointer;
+  }
+  button:hover, select:hover { border-color: #b8c0cc; }
+  button.primary { background: var(--text); color: #fff; border-color: var(--text); min-width: 68px; font-weight: 500; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 5px 9px; }
+  .seg button.active { background: var(--text); color: #fff; }
+
+  h1#headline { font-size: 23px; font-weight: 600; letter-spacing: -.01em; margin: 12px 0 8px; line-height: 1.25; }
+
+  /* 3D Viewport Container */
+  .viewport-card {
+    position: relative; width: 100%; height: min(68vh, 660px); min-height: 460px;
+    background: #e9ecef; border: 1px solid var(--line); border-radius: 12px;
+    overflow: hidden; box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05);
+  }
+  #webglCanvas { width: 100%; height: 100%; display: block; outline: none; }
+
+  /* Floating 3D Overlays */
+  .cam-bar {
+    position: absolute; top: 12px; left: 12px; z-index: 10;
+    display: flex; flex-wrap: wrap; gap: 6px;
+    background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(6px);
+    padding: 5px; border-radius: 8px; border: 1px solid var(--line);
+  }
+  .cam-bar button { padding: 4px 9px; font-size: 11px; border-radius: 5px; }
+  .cam-bar button.active { background: var(--text); color: #fff; border-color: var(--text); }
+
+  .wing-hud {
+    position: absolute; top: 12px; right: 12px; z-index: 10;
+    display: flex; flex-direction: column; gap: 6px;
+    background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(6px);
+    padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line);
+    font-size: var(--s); min-width: 270px;
+  }
+  .wing-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .wing-ttl { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .wing-ttl.cur { color: var(--cur); }
+  .wing-ttl.prop { color: var(--prop); }
+
+  .inspector-pill {
+    position: absolute; bottom: 12px; left: 12px; z-index: 10;
+    background: rgba(30, 41, 59, 0.92); color: #fff;
+    padding: 6px 12px; border-radius: 6px; font-size: var(--s);
+    pointer-events: none; max-width: 65%;
+  }
+  .cam-hint {
+    position: absolute; bottom: 12px; right: 12px; z-index: 10;
+    background: rgba(255, 255, 255, 0.9); color: var(--muted);
+    padding: 4px 10px; border-radius: 6px; font-size: 11px; border: 1px solid var(--line);
+  }
+
+  /* Projected 3D Labels */
+  #labelLayer {
+    position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 5;
+  }
+  .lbl3d {
+    position: absolute; transform: translate(-50%, -100%);
+    font-size: 11px; font-weight: 600; white-space: nowrap;
+    padding: 2px 6px; border-radius: 4px; pointer-events: none;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  }
+  .lbl3d.char-anitha { background: #1e293b; color: #fff; }
+  .lbl3d.char-jeevan { background: var(--jv); color: #fff; }
+  .lbl3d.board {
+    background: #0f172a; color: #38bdf8; border: 1px solid #334155;
+    font-family: ui-monospace, monospace; font-size: 10.5px;
+  }
+
+  /* Story Strip below 3D View */
+  .stories-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+    margin: 10px 2px 6px; padding: 10px 14px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+  }
+  .story-col .st-head { font-weight: 600; font-size: var(--s); margin-bottom: 3px; }
+  .story-col.cur .st-head { color: var(--cur); }
+  .story-col.prop .st-head { color: var(--prop); }
+  .story-line { font-size: var(--s); color: var(--text); margin: 0 0 3px; }
+  .fline { font-size: var(--s); color: var(--muted); margin: 2px 0 0; }
+  .fline.jv { color: var(--jv); }
+
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 18px; align-items: center;
+    font-size: var(--s); color: var(--muted); margin: 8px 2px 6px;
+  }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: middle; margin-right: 4px; }
+  .d-cur { background: var(--cur); }
+  .d-prop { background: var(--prop); }
+  .d-appt { background: var(--appt); }
+  .d-walk { background: var(--walk); }
+  .d-walkpin { background: var(--walkpin); }
+  .d-doc { background: #f8fafc; border: 1.5px solid #475569; }
+  .d-nurse { background: #0284c7; }
+  .ring { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--text); vertical-align: -1px; margin-right: 4px; }
+  .ring.jv { border-color: var(--jv); }
+
+  .lesson {
+    margin: 4px 2px 14px; padding: 8px 12px;
+    background: #eef6f5; border-left: 3px solid var(--prop);
+    border-radius: 6px; font-size: var(--m); color: var(--text);
+  }
+
+  /* Wait Table */
+  .waits { margin: 14px 0 12px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+  .waits h2 { font-size: var(--m); margin: 0 0 2px; font-weight: 600; }
+  .waits h2 .sf { font-weight: 400; color: var(--muted); font-size: var(--s); }
+  .wt { width: 100%; border-collapse: collapse; font-size: var(--s); margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .wt th, .wt td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+  .wt th { color: var(--muted); font-weight: 500; }
+  .wt th:first-child, .wt td:first-child { text-align: left; }
+  .wt td.na { color: #94a3b8; }
+  .wt td.amb { background: #fef3c7; color: #92400e; }
+  .wt td.red { background: #fee2e2; color: var(--bad); font-weight: 600; }
+  .wt td.tot { font-weight: 600; }
+  .wt tr.grp td { border-bottom: 0; padding-top: 10px; font-weight: 700; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+  .wt tr.grp.c td { color: var(--cur); }
+  .wt tr.grp.p td { color: var(--prop); }
+  .wt tr.grp.k td { color: var(--muted); }
+  .wt td .n { color: var(--muted); font-weight: 400; font-size: 11px; }
+  .wnote { font-size: var(--s); color: var(--muted); margin: 8px 0 0; }
+
+  /* Controls & Details */
+  details.more { margin-top: 14px; border-top: 1px solid var(--line); }
+  details.more > summary { cursor: pointer; padding: 12px 2px; font-weight: 600; font-size: var(--m); list-style: none; }
+  details.more > summary::before { content: "▸ "; color: var(--muted); }
+  details.more[open] > summary::before { content: "▾ "; }
+  .lower { display: grid; grid-template-columns: 5fr 7fr; gap: 16px; margin-bottom: 16px; }
+  .panel { padding: 16px 18px; }
+  .panel h2 { font-size: var(--m); font-weight: 600; margin: 0 0 12px; }
+  .ctrl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 20px; margin-top: 12px; }
+  .ctrl .top { display: flex; justify-content: space-between; font-size: var(--s); }
+  .ctrl .top span:last-child { font-weight: 600; }
+  .ctrl.wide { grid-column: 1 / -1; }
+  input[type=range] { width: 100%; accent-color: #334155; margin: 4px 0 0; }
+  .staff { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 20px; }
+  .stepper { display: flex; align-items: center; gap: 6px; font-size: var(--s); }
+  .stepper span { flex: 1; }
+  .stepper button { padding: 2px 9px; line-height: 1.3; }
+  .stepper output { min-width: 18px; text-align: center; font-weight: 600; }
+  .stage { display: grid; grid-template-columns: 145px 1fr 48px; gap: 4px 10px; align-items: center; font-size: var(--s); margin-bottom: 12px; }
+  .stage .nm { grid-row: span 3; color: var(--text); }
+  .bar { height: 7px; background: #eef0f4; border-radius: 4px; overflow: hidden; }
+  .bar > div { height: 100%; border-radius: 4px; width: 3%; }
+  .b-cur { background: var(--cur); }
+  .b-prop { background: var(--prop); }
+  .b-appt { background: var(--appt); }
+  .stage .val { text-align: right; color: var(--muted); }
+  .insight { font-size: var(--s); color: var(--text); border-top: 1px solid var(--line); padding-top: 12px; margin: 10px 0 0; }
+  @media (max-width: 1100px) {
+    .stories-grid, .lower { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand">
+      <span>3D OPD Workflow Simulator</span>
+      <span class="badge-fix">v2 · Fixed Lounge Chairs, Staggered Slots &amp; 3D Signage</span>
+    </div>
+    <div class="transport">
+      <span id="simStatusDot"></span>
+      <span id="clockDisplay" class="clock-t num">07:30 AM</span>
+      <div class="prog" title="Morning session progress"><div id="clockProgressBar"></div></div>
+      <button id="btnPlayPause" class="primary"><span id="playPauseText">Pause</span></button>
+      <button id="btnStep">+10 min</button>
+      <button id="btnReset">Restart</button>
+      <div class="seg">
+        <button data-speed="1" class="speed-btn">1×</button>
+        <button data-speed="2" class="speed-btn active">2×</button>
+        <button data-speed="5" class="speed-btn">5×</button>
+        <button data-speed="10" class="speed-btn">10×</button>
+      </div>
+    </div>
+  </div>
+
+  <h1 id="headline">Same patients, same staff — 3D comparison of Today's OPD vs. Proposed Appointment &amp; Token System</h1>
+
+  <!-- 3D Viewport -->
+  <div class="viewport-card" id="viewportContainer">
+    <div class="cam-bar">
+      <button data-cam="overview" class="cam-btn active">Overview (Both Wings)</button>
+      <button data-cam="reg" class="cam-btn">1. Registration &amp; Triage</button>
+      <button data-cam="vitals" class="cam-btn">2. Dual Vitals Lanes</button>
+      <button data-cam="consult" class="cam-btn">3. Door Crowd vs. Token Lounge</button>
+      <button data-cam="anitha" class="cam-btn">Follow Anitha (Free Orbit)</button>
+      <button data-cam="jeevan" class="cam-btn">Follow Jeevan (Free Orbit)</button>
+    </div>
+
+    <div class="wing-hud num">
+      <div class="wing-row">
+        <span class="wing-ttl cur">▲ Back Wing · Today (All Walk-In)</span>
+        <span class="muted">In OPD <b id="curActiveCount">0</b> · Done <b id="curDoneCount">0</b></span>
+      </div>
+      <div class="wing-row">
+        <span class="wing-ttl prop">▼ Front Wing · Proposed (<span id="proposedBannerSplit">50% Appt</span>)</span>
+        <span class="muted">In OPD <b id="propActiveCount">0</b> · Done <b id="propDoneCount">0</b></span>
+      </div>
+    </div>
+
+    <div id="labelLayer"></div>
+    <div id="agentInspector" class="inspector-pill">Click or hover any 3D patient figure to inspect their wait times, assigned chair, and token status.</div>
+    <div class="cam-hint">Left-drag: Orbit 360° · Right-drag: Pan · Scroll: Zoom · Click patient: Follow</div>
+    <canvas id="webglCanvas"></canvas>
+  </div>
+
+  <!-- Live Narrative Strip -->
+  <div class="stories-grid">
+    <div class="story-col cur">
+      <div class="st-head">BACK WING — Today: 100% Walk-In, No Tokens</div>
+      <p id="storyCur" class="story-line"></p>
+      <p id="followCur" class="fline"></p>
+      <p id="jeevanCur" class="fline jv"></p>
+    </div>
+    <div class="story-col prop">
+      <div class="st-head">FRONT WING — Proposed: Express Appt Bypass, Dual Vitals &amp; Persistent Lounge Chairs</div>
+      <p id="storyProp" class="story-line"></p>
+      <p id="followProp" class="fline"></p>
+      <p id="jeevanProp" class="fline jv"></p>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><span class="dot d-appt"></span> Booked Appt (Blue)</span>
+    <span><span class="dot d-walk"></span> Walk-In without PIN (Rust)</span>
+    <span><span class="dot d-walkpin"></span> Walk-In with PIN — Uses Triage (Amber)</span>
+    <span><span class="dot d-doc"></span> Doctor (White Coat)</span>
+    <span><span class="dot d-nurse"></span> Vitals / Triage Nurse (Sky Scrubs)</span>
+    <span><span class="ring"></span> <b id="followName">Anitha</b> (Walk-In Surge)</span>
+    <span><span class="ring jv"></span> <b>Jeevan</b> (Walks in today · Books in Proposed)</span>
+  </div>
+
+  <div id="lesson" class="lesson" aria-live="polite"></div>
+
+  <!-- Live Checkpoint Wait Table -->
+  <section class="waits" aria-label="Wait at each checkpoint">
+    <h2>Wait at each checkpoint (minutes) <span class="sf" id="wtState">so far</span></h2>
+    <table class="wt">
+      <thead>
+        <tr>
+          <th>Cohort / Tracked Person</th>
+          <th>Registration</th>
+          <th>Triage (PIN)</th>
+          <th>Vitals</th>
+          <th>Doctor Wait</th>
+          <th>Pharmacy</th>
+          <th>Standing Time</th>
+          <th>Total OPD Time</th>
+        </tr>
+      </thead>
+      <tbody id="wtBody"></tbody>
+    </table>
+    <p class="wnote">
+      <b>Operational Rules:</b> Early morning walk-ins fill the initial 15-minute consultation window (`07:30–07:45 AM`) while booked patients arrive staggered 15 minutes before their reserved slots. Seated patients hold a persistent chair in the lounge until their token is called.
+      Shading: <span style="background:#fef3c7;color:#92400e;padding:0 4px;border-radius:3px">15–30 min</span> ·
+      <span style="background:#fee2e2;color:var(--bad);padding:0 4px;border-radius:3px;font-weight:600">30+ min</span>.
+    </p>
+  </section>
+
+  <!-- Expandable Controls & Stage Bars -->
+  <details class="more" open>
+    <summary>Simulation Parameters, Staffing &amp; Stage Breakdown</summary>
+    <section class="lower">
+      <div class="card panel">
+        <h2>Scenario &amp; Service Parameters</h2>
+        <select id="presetSelect">
+          <option value="default">Default · 50% appointments, 160 patients</option>
+          <option value="heavy_surge">Heavy Monday Surge · 220 patients</option>
+          <option value="high_digital">High Digital Adoption · 75% appointments</option>
+          <option value="slow_consult">Complex Cases · 7.0 min consultation</option>
+        </select>
+        <div class="ctrl-grid">
+          <div class="ctrl wide">
+            <div class="top"><span>Pre-booked appointment share</span><span id="valApptPct">50% Appt / 50% Walk-In</span></div>
+            <input id="sliderApptPct" type="range" min="10" max="80" step="5" value="50" />
+          </div>
+          <div class="ctrl wide">
+            <div class="top"><span>Patients per morning</span><span id="valPatientVol">160 Patients</span></div>
+            <input id="sliderPatientVol" type="range" min="80" max="240" step="20" value="160" />
+          </div>
+          <div class="ctrl">
+            <div class="top"><span>Registration time</span><span id="valRegTime">2.2 min</span></div>
+            <input id="sliderRegTime" type="range" min="1.0" max="4.0" step="0.2" value="2.2" />
+          </div>
+          <div class="ctrl">
+            <div class="top"><span>Vitals time</span><span id="valVitalsTime">2.4 min</span></div>
+            <input id="sliderVitalsTime" type="range" min="1.2" max="4.5" step="0.2" value="2.4" />
+          </div>
+          <div class="ctrl">
+            <div class="top"><span>Consultation (per doctor)</span><span id="valConsultTime">5.2 min</span></div>
+            <input id="sliderConsultTime" type="range" min="3.0" max="8.5" step="0.2" value="5.2" />
+          </div>
+          <div class="ctrl">
+            <div class="top"><span>Pharmacy dispensing</span><span id="valPharmTime">3.6 min</span></div>
+            <input id="sliderPharmTime" type="range" min="1.0" max="6.0" step="0.2" value="3.6" />
+          </div>
+          <div class="ctrl">
+            <div class="top"><span>Walk-ins with PIN (proposed)</span><span id="valPinPct">50%</span></div>
+            <input id="sliderPinPct" type="range" min="0" max="100" step="10" value="50" />
+          </div>
+          <div class="ctrl">
+            <div class="top"><span>Triage desk time (PIN)</span><span id="valTriageTime">0.5 min</span></div>
+            <input id="sliderTriageTime" type="range" min="0.2" max="2.0" step="0.1" value="0.5" />
+          </div>
+        </div>
+
+        <h2 style="margin-top:16px">Staffing (Identical Across Both Wings)</h2>
+        <div class="staff">
+          <div class="stepper" data-key="regCounters"><span>Registration clerks</span><button data-d="-1">−</button><output id="out_regCounters">1</output><button data-d="1">+</button></div>
+          <div class="stepper" data-key="vitalsNurses"><span>Vitals nurses / dept</span><button data-d="-1">−</button><output id="out_vitalsNurses">1</output><button data-d="1">+</button></div>
+          <div class="stepper" data-key="doctorsPerDept"><span>Doctors / dept</span><button data-d="-1">−</button><output id="out_doctorsPerDept">2</output><button data-d="1">+</button></div>
+          <div class="stepper" data-key="triageCounters"><span>Triage desks (proposed)</span><button data-d="-1">−</button><output id="out_triageCounters">1</output><button data-d="1">+</button></div>
+          <div class="stepper" data-key="pharmCounters"><span>Pharmacy counters</span><button data-d="-1">−</button><output id="out_pharmCounters">2</output><button data-d="1">+</button></div>
+        </div>
+
+        <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line);font-size:var(--s)">
+          <b>Vitals Lane Calling Policy (Proposed):</b>
+          <label style="margin-left:8px"><input type="radio" name="vitalsPolicy" value="alternate" checked> Alternate (1:1)</label>
+          <label style="margin-left:8px"><input type="radio" name="vitalsPolicy" value="apptFirst"> Appt Priority</label>
+          <label style="margin-left:8px"><input type="radio" name="vitalsPolicy" value="walkFirst"> Walk-In Priority</label>
+          <div style="margin-top:6px">
+            <label><input type="checkbox" id="chkBookedTriage"> Route pre-booked patients through Triage desk too (default: direct to Dept Vitals)</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="card panel">
+        <h2>Average Wait by Stage (Unconfounded)</h2>
+        <div class="stage">
+          <div class="nm">Registration<br><span class="muted" style="font-size:11px">(Non-PIN Walk-ins)</span></div>
+          <div class="bar"><div id="barRegCur" class="b-cur"></div></div><div id="barLblRegCur" class="val num">0m</div>
+          <div class="bar"><div id="barRegWalk" class="b-prop"></div></div><div id="barLblRegWalk" class="val num">0m</div>
+          <div></div><div></div>
+        </div>
+        <div class="stage">
+          <div class="nm">Department Vitals</div>
+          <div class="bar"><div id="barVitCur" class="b-cur"></div></div><div id="barLblVitCur" class="val num">0m</div>
+          <div class="bar"><div id="barVitWalk" class="b-prop"></div></div><div id="barLblVitWalk" class="val num">0m</div>
+          <div class="bar"><div id="barVitAppt" class="b-appt"></div></div><div id="barLblVitAppt" class="val num">0m</div>
+        </div>
+        <div class="stage">
+          <div class="nm">Doctor Wait<br><span class="muted" style="font-size:11px">(Door vs. Seated)</span></div>
+          <div class="bar"><div id="barConCur" class="b-cur"></div></div><div id="barLblConCur" class="val num">0m</div>
+          <div class="bar"><div id="barConProp" class="b-prop"></div></div><div id="barLblConProp" class="val num">0m</div>
+          <div></div><div></div>
+        </div>
+        <div class="stage">
+          <div class="nm">Pharmacy</div>
+          <div class="bar"><div id="barPharmCur" class="b-cur"></div></div><div id="barLblPharmCur" class="val num">0m</div>
+          <div class="bar"><div id="barPharmProp" class="b-prop"></div></div><div id="barLblPharmProp" class="val num">0m</div>
+          <div></div><div></div>
+        </div>
+        <div class="legend" style="margin:6px 0 0">
+          <span><span class="dot d-cur"></span> Current (All Walk-in)</span>
+          <span><span class="dot d-prop"></span> Proposed (Walk-In / Overall)</span>
+          <span><span class="dot d-appt"></span> Proposed (Booked Appt)</span>
+        </div>
+        <p id="executiveInsightText" class="insight">Live operational comparison updates as patients flow through both 3D wings.</p>
+      </div>
+    </section>
+  </details>
+</div>
+
+<script>
+// ============================================================================
+// 1. LOGICAL SIMULATION ENGINE (PERSISTENT CHAIRS & UNCLAMPED SLOTS)
+// ============================================================================
+const SIM_START_MIN = 7 * 60 + 30; // 07:30 AM
+const SIM_DURATION_MAX = 360;      // 6 hours -> 01:30 PM
+const LOGICAL_W = 760, LOGICAL_H = 470;
+const LOUNGE_SEAT_CAP = 20;        // 4 rows x 5 chairs per department lounge
+
+const params = {
+  apptRatio: 0.50,
+  totalPatients: 160,
+  regServiceTime: 2.2,
+  vitalsServiceTime: 2.4,
+  consultServiceTime: 5.2,
+  pharmServiceTime: 3.6,
+  regCounters: 1,
+  vitalsNurses: 1,
+  doctorsPerDept: 2,
+  pharmCounters: 2,
+  triageCounters: 1,
+  triageServiceTime: 0.5,
+  pinRatio: 0.50,
+  bookedViaTriage: false,
+  vitalsPolicy: 'alternate'
+};
+
+let simTime = 0;
+let isRunning = true;
+let simSpeed = 2;
+let lastFrameTime = performance.now();
+let followId = null, defaultFollowId = null, followName = 'Anitha';
+let jeevanId = null;
+
+const LAYOUT = {
+  entrance: { x: 24, y: 235 },
+  regCounters: [{ x: 148, y: 195 }, { x: 148, y: 275 }],
+  regQueueOrigin: { x: 112, y: 215 },
+  triageDesk: { x: 148, y: 115 },
+  depts: [
+    {
+      id: 0, name: 'DEPT A: MEDICINE', prefix: 'A', yCenter: 125,
+      vitalsDesk: { x: 332, y: 125 },
+      vitalsSingleQueueOrigin: { x: 292, y: 125 },
+      vitalsApptQueueOrigin: { x: 292, y: 95 },
+      vitalsWalkQueueOrigin: { x: 292, y: 152 },
+      consultRoom: { x: 545, y: 125 },
+      consultDoorQueueOrigin: { x: 492, y: 125 },
+      tokenLoungeBox: { x: 390, y: 68, w: 112, h: 114 }
+    },
+    {
+      id: 1, name: 'DEPT B: ORTHOPAEDICS', prefix: 'B', yCenter: 345,
+      vitalsDesk: { x: 332, y: 345 },
+      vitalsSingleQueueOrigin: { x: 292, y: 345 },
+      vitalsApptQueueOrigin: { x: 292, y: 315 },
+      vitalsWalkQueueOrigin: { x: 292, y: 372 },
+      consultRoom: { x: 545, y: 345 },
+      consultDoorQueueOrigin: { x: 492, y: 345 },
+      tokenLoungeBox: { x: 390, y: 288, w: 112, h: 114 }
+    }
+  ],
+  pharmacyCounters: [{ x: 712, y: 195 }, { x: 712, y: 275 }],
+  pharmQueueOrigin: { x: 672, y: 215 }
+};
+
+function createSeededRandom(seed) {
+  let s = seed % 2147483647;
+  if (s <= 0) s += 2147483646;
+  return function () {
+    s = (s * 16807) % 2147483647;
+    return (s - 1) / 2147483646;
+  };
+}
+
+function counterY(idx, n) {
+  if (n <= 1) return 235;
+  const gap = Math.min(76, 190 / (n - 1));
+  return 235 + (idx - (n - 1) / 2) * gap;
+}
+function doctorY(roomY, idx, n) {
+  return n <= 1 ? roomY : roomY + (idx - (n - 1) / 2) * 48 / (n - 1);
+}
+
+class HospitalSimulation {
+  constructor(mode) {
+    this.mode = mode;
+    this.reset();
+  }
+
+  reset() {
+    this.rng = createSeededRandom(42026);
+    this.patients = [];
+    this.completedPatients = [];
+    this.regQueue = [];
+    this.regServers = new Array(params.regCounters).fill(null);
+    this.triageQueue = [];
+    this.triageServers = new Array(params.triageCounters).fill(null);
+
+    this.deptState = [0, 1].map(dId => ({
+      id: dId,
+      prefix: dId === 0 ? 'A' : 'B',
+      vitalsQueueSingle: [],
+      vitalsQueueAppt: [],
+      vitalsQueueWalk: [],
+      vitalsServers: new Array(params.vitalsNurses).fill(null),
+      lastServedAppt: false,
+      nowServingToken: '--',
+      consultQueue: [],
+      consultServers: new Array(params.doctorsPerDept).fill(null),
+      // Persistent 20-chair allocation map so seated patients never shift seats on token calls
+      seatSlots: new Array(LOUNGE_SEAT_CAP).fill(null)
+    }));
+
+    this.pharmQueue = [];
+    this.pharmServers = new Array(params.pharmCounters).fill(null);
+    this.peakRegQueue = 0;
+    this.peakConsultCrowd = 0;
+    this.bypassedRegCount = 0;
+
+    this.generateSchedule();
+    this.assignReservedTokens();
+  }
+
+  generateSchedule() {
+    const N = params.totalPatients;
+    const apptCount = Math.round(N * params.apptRatio);
+    const order = Array.from({ length: N }, (_, k) => k);
+    for (let k = N - 1; k > 0; k--) {
+      const j = Math.floor(this.rng() * (k + 1));
+      [order[k], order[j]] = [order[j], order[k]];
+    }
+    const apptRank = new Array(N).fill(-1);
+    for (let k = 0; k < apptCount; k++) apptRank[order[k]] = k;
+    const slotSpan = 230;
+
+    for (let i = 0; i < N; i++) {
+      const r1 = this.rng(), r2 = this.rng(), r3 = this.rng();
+      const r4 = this.rng(), r5 = this.rng(), r6 = this.rng();
+      const deptId = r5 < 0.52 ? 0 : 1;
+      const exactAppt = this.mode === 'proposed' && apptRank[i] >= 0;
+      const surgeMin = Math.pow(r1, 1.35) * 145;
+      const rank = apptRank[i];
+      const staggeredSlotMin = apptCount > 0 && rank >= 0
+        ? 10 + ((rank + 0.5) / apptCount) * slotSpan + (r6 * 4 - 2)
+        : surgeMin;
+
+      const arrivalTime = exactAppt ? Math.max(2, staggeredSlotMin) : surgeMin;
+
+      this.patients.push({
+        id: i + 1,
+        isAppt: exactAppt,
+        hasPin: false,
+        slotTime: exactAppt ? arrivalTime : null,
+        walkArrival: surgeMin,
+        deptId,
+        arrivalTime,
+        regFactor: 0.85 + r2 * 0.30,
+        vitalsFactor: 0.85 + r3 * 0.30,
+        consultFactor: 0.85 + r4 * 0.30,
+        pharmFactor: 0.85 + r1 * 0.30,
+        state: 'NOT_ARRIVED',
+        tokenNum: null,
+        tokenLabel: null,
+        seatSlot: null, // Persistent chair index (0..19) or -1 if standing in lounge overflow
+        x: LAYOUT.entrance.x,
+        y: LAYOUT.entrance.y,
+        targetX: LAYOUT.entrance.x,
+        targetY: LAYOUT.entrance.y,
+        standingTime: 0,
+        seatedTokenTime: 0,
+        regWaitTime: 0,
+        triageWaitTime: 0,
+        vitalsWaitTime: 0,
+        consultWaitTime: 0,
+        pharmWaitTime: 0,
+        serviceRemaining: 0,
+        completionTime: null
+      });
+    }
+    this.patients.sort((a, b) => a.arrivalTime - b.arrivalTime);
+  }
+
+  assignReservedTokens() {
+    const r = params.apptRatio;
+    const L = params.consultServiceTime / params.doctorsPerDept;
+    const BOOKING_LEAD = 15;
+    this.slotLen = L;
+
+    // Reserve tokens starting after the initial 15-min walk-in lead window so:
+    // 1) Early walk-ins (07:30-07:45 AM) get tokens #1..#leadTokens and keep doctors busy immediately
+    // 2) Every booked patient has slotTime >= 15m and arrives at slotTime - 15m without clamping at t=2m!
+    const leadTokens = Math.max(2, Math.ceil(BOOKING_LEAD / L));
+    const isReserved = k => {
+      if (k <= leadTokens) return false;
+      const m = k - leadTokens;
+      return Math.floor(m * r + 1e-9) > Math.floor((m - 1) * r + 1e-9);
+    };
+
+    for (const dept of this.deptState) {
+      dept.reserved = { has: isReserved };
+      dept.nextWalkToken = 1;
+    }
+    if (this.mode !== 'proposed') return;
+
+    const hash = id => (Math.imul(id, 2654435761) >>> 0);
+    for (const dept of this.deptState) {
+      const inDept = this.patients.filter(p => p.deptId === dept.id);
+      const want = Math.round(inDept.length * r);
+      const cur = inDept.filter(p => p.isAppt).sort((a, b) => hash(a.id) - hash(b.id));
+      const walk = inDept.filter(p => !p.isAppt).sort((a, b) => hash(a.id) - hash(b.id));
+      while (cur.length > want) {
+        const p = cur.pop();
+        p.isAppt = false; p.slotTime = null; p.arrivalTime = p.walkArrival;
+      }
+      while (cur.length < want && walk.length) {
+        const p = walk.pop();
+        p.isAppt = true; p.slotTime = p.arrivalTime; cur.push(p);
+      }
+    }
+
+    for (const dept of this.deptState) {
+      const booked = this.patients
+        .filter(p => p.isAppt && p.deptId === dept.id)
+        .sort((a, b) => a.slotTime - b.slotTime || a.id - b.id);
+      let k = leadTokens;
+      for (const p of booked) {
+        do { k++; } while (!isReserved(k));
+        p.reservedToken = k;
+        p.slotTime = (k - 1) * L;
+        p.arrivalTime = Math.max(1.5, p.slotTime - BOOKING_LEAD);
+      }
+    }
+    this.patients.sort((a, b) => a.arrivalTime - b.arrivalTime);
+
+    const h2 = id => (Math.imul(id ^ 0x5bd1e995, 2246822519) >>> 0);
+    const walkIns = this.patients.filter(p => !p.isAppt).sort((a, b) => h2(a.id) - h2(b.id));
+    const nPin = Math.round(walkIns.length * params.pinRatio);
+    walkIns.forEach((p, i) => { p.hasPin = i < nPin; });
+  }
+
+  step(dt) {
+    // 1. Arrivals
+    for (const p of this.patients) {
+      if (p.state === 'NOT_ARRIVED' && simTime >= p.arrivalTime) {
+        p.x = LAYOUT.entrance.x;
+        p.y = LAYOUT.entrance.y + ((p.id % 5) - 2) * 6;
+        if (this.mode === 'proposed' && p.isAppt) {
+          this.bypassedRegCount++;
+          if (params.bookedViaTriage) {
+            p.state = 'QUEUE_TRIAGE';
+            this.triageQueue.push(p);
+          } else {
+            p.state = 'WALKING_TO_VITALS';
+            p.walkTimer = 1.0;
+          }
+        } else if (this.mode === 'proposed' && p.hasPin) {
+          this.bypassedRegCount++;
+          p.state = 'QUEUE_TRIAGE';
+          this.triageQueue.push(p);
+        } else {
+          p.state = 'QUEUE_REG';
+          this.regQueue.push(p);
+          if (this.regQueue.length > this.peakRegQueue) {
+            this.peakRegQueue = this.regQueue.length;
+          }
+        }
+      }
+    }
+
+    // 2. Registration Counters
+    for (let c = 0; c < this.regServers.length; c++) {
+      const activeP = this.regServers[c];
+      if (activeP) {
+        activeP.serviceRemaining -= dt;
+        if (activeP.serviceRemaining <= 0) {
+          activeP.state = 'WALKING_TO_VITALS';
+          activeP.walkTimer = 1.0;
+          this.regServers[c] = null;
+        }
+      }
+      if (!this.regServers[c] && this.regQueue.length > 0) {
+        const nextP = this.regQueue.shift();
+        nextP.state = 'SERVING_REG';
+        nextP.serverIdx = c;
+        nextP.serviceRemaining = params.regServiceTime * nextP.regFactor;
+        this.regServers[c] = nextP;
+      }
+    }
+
+    // 2b. Triage Desk (PIN walk-ins + optional booked patients)
+    for (let c = 0; c < this.triageServers.length; c++) {
+      const activeP = this.triageServers[c];
+      if (activeP) {
+        activeP.serviceRemaining -= dt;
+        if (activeP.serviceRemaining <= 0) {
+          activeP.state = 'WALKING_TO_VITALS';
+          activeP.walkTimer = 0.8;
+          this.triageServers[c] = null;
+        }
+      }
+      if (!this.triageServers[c] && this.triageQueue.length > 0) {
+        const nextP = this.triageQueue.shift();
+        nextP.state = 'SERVING_TRIAGE';
+        nextP.serverIdx = c;
+        nextP.serviceRemaining = params.triageServiceTime;
+        this.triageServers[c] = nextP;
+      }
+    }
+
+    // 3. Walking to Vitals
+    for (const p of this.patients) {
+      if (p.state === 'WALKING_TO_VITALS') {
+        p.walkTimer -= dt;
+        if (p.walkTimer <= 0) {
+          const dept = this.deptState[p.deptId];
+          if (this.mode === 'current') {
+            p.state = 'QUEUE_VITALS_SINGLE';
+            dept.vitalsQueueSingle.push(p);
+          } else if (p.isAppt) {
+            p.state = 'QUEUE_VITALS_APPT';
+            dept.vitalsQueueAppt.push(p);
+          } else {
+            p.state = 'QUEUE_VITALS_WALK';
+            dept.vitalsQueueWalk.push(p);
+          }
+        }
+      }
+    }
+
+    // 4. Department Vitals & Persistent Lounge Chair Assignment
+    for (const dept of this.deptState) {
+      for (let n = 0; n < dept.vitalsServers.length; n++) {
+        const activeP = dept.vitalsServers[n];
+        if (activeP) {
+          activeP.serviceRemaining -= dt;
+          if (activeP.serviceRemaining <= 0) {
+            if (this.mode === 'proposed') {
+              if (activeP.isAppt) {
+                activeP.tokenNum = activeP.reservedToken;
+              } else {
+                while (dept.reserved.has(dept.nextWalkToken)) dept.nextWalkToken++;
+                activeP.tokenNum = dept.nextWalkToken++;
+              }
+              activeP.tokenLabel = `#${dept.prefix}${activeP.tokenNum}`;
+              activeP.state = 'SEATED_TOKEN_LOUNGE';
+              // Claim a persistent chair slot (0..19) if available; otherwise -1 (overflow standing)
+              const freeChair = dept.seatSlots.indexOf(null);
+              if (freeChair !== -1) {
+                dept.seatSlots[freeChair] = activeP.id;
+                activeP.seatSlot = freeChair;
+              } else {
+                activeP.seatSlot = -1;
+              }
+            } else {
+              activeP.state = 'QUEUE_CONSULT_STANDING';
+            }
+            dept.vitalsServers[n] = null;
+            dept.consultQueue.push(activeP);
+            const totalCrowd = this.deptState[0].consultQueue.length + this.deptState[1].consultQueue.length;
+            if (totalCrowd > this.peakConsultCrowd) this.peakConsultCrowd = totalCrowd;
+          }
+        }
+
+        if (!dept.vitalsServers[n]) {
+          let nextP = null;
+          if (this.mode === 'current') {
+            if (dept.vitalsQueueSingle.length > 0) nextP = dept.vitalsQueueSingle.shift();
+          } else {
+            const hasAppt = dept.vitalsQueueAppt.length > 0;
+            const hasWalk = dept.vitalsQueueWalk.length > 0;
+            let takeAppt = null;
+            if (hasAppt && hasWalk) {
+              takeAppt = params.vitalsPolicy === 'apptFirst' ? true
+                : params.vitalsPolicy === 'walkFirst' ? false
+                : !dept.lastServedAppt;
+            } else if (hasAppt) takeAppt = true;
+            else if (hasWalk) takeAppt = false;
+            if (takeAppt !== null) {
+              nextP = takeAppt ? dept.vitalsQueueAppt.shift() : dept.vitalsQueueWalk.shift();
+              dept.lastServedAppt = takeAppt;
+            }
+          }
+          if (nextP) {
+            nextP.state = 'SERVING_VITALS';
+            nextP.nurseIdx = n;
+            nextP.serviceRemaining = params.vitalsServiceTime * nextP.vitalsFactor;
+            dept.vitalsServers[n] = nextP;
+          }
+        }
+      }
+    }
+
+    // 5. Consultation Rooms
+    for (const dept of this.deptState) {
+      for (let docIdx = 0; docIdx < dept.consultServers.length; docIdx++) {
+        const activeP = dept.consultServers[docIdx];
+        if (activeP) {
+          activeP.serviceRemaining -= dt;
+          if (activeP.serviceRemaining <= 0) {
+            activeP.state = 'QUEUE_PHARM';
+            this.pharmQueue.push(activeP);
+            dept.consultServers[docIdx] = null;
+          }
+        }
+        if (!dept.consultServers[docIdx] && dept.consultQueue.length > 0) {
+          if (this.mode === 'proposed') {
+            dept.consultQueue.sort((a, b) => (a.tokenNum || 9999) - (b.tokenNum || 9999));
+          }
+          const nextP = dept.consultQueue.shift();
+          // Release persistent chair when called by doctor; if someone in lounge was standing in overflow (-1), give them this chair!
+          if (this.mode === 'proposed' && nextP.seatSlot !== null && nextP.seatSlot >= 0) {
+            const freedSeat = nextP.seatSlot;
+            dept.seatSlots[freedSeat] = null;
+            nextP.seatSlot = null;
+            const overflowP = dept.consultQueue.find(q => q.seatSlot === -1);
+            if (overflowP) {
+              dept.seatSlots[freedSeat] = overflowP.id;
+              overflowP.seatSlot = freedSeat;
+            }
+          }
+          nextP.state = 'SERVING_CONSULT';
+          nextP.docIdx = docIdx;
+          nextP.serviceRemaining = params.consultServiceTime * nextP.consultFactor;
+          dept.consultServers[docIdx] = nextP;
+          if (this.mode === 'proposed' && nextP.tokenLabel) {
+            dept.nowServingToken = nextP.tokenLabel;
+          }
+        }
+      }
+    }
+
+    // 6. Pharmacy Counters
+    for (let c = 0; c < this.pharmServers.length; c++) {
+      const activeP = this.pharmServers[c];
+      if (activeP) {
+        activeP.serviceRemaining -= dt;
+        if (activeP.serviceRemaining <= 0) {
+          activeP.state = 'COMPLETED';
+          activeP.completionTime = simTime;
+          this.completedPatients.push(activeP);
+          this.pharmServers[c] = null;
+        }
+      }
+      if (!this.pharmServers[c] && this.pharmQueue.length > 0) {
+        const nextP = this.pharmQueue.shift();
+        nextP.state = 'SERVING_PHARM';
+        nextP.serverIdx = c;
+        nextP.serviceRemaining = params.pharmServiceTime * nextP.pharmFactor;
+        this.pharmServers[c] = nextP;
+      }
+    }
+
+    // 7. Accumulate Wait & Friction Metrics
+    for (const p of this.patients) {
+      if (p.state === 'QUEUE_TRIAGE') {
+        p.triageWaitTime += dt; p.standingTime += dt;
+      } else if (p.state === 'QUEUE_REG') {
+        p.regWaitTime += dt; p.standingTime += dt;
+      } else if (p.state === 'QUEUE_VITALS_SINGLE' || p.state === 'QUEUE_VITALS_APPT' || p.state === 'QUEUE_VITALS_WALK') {
+        p.vitalsWaitTime += dt; p.standingTime += dt;
+      } else if (p.state === 'QUEUE_CONSULT_STANDING') {
+        p.consultWaitTime += dt; p.standingTime += dt;
+      } else if (p.state === 'SEATED_TOKEN_LOUNGE') {
+        p.consultWaitTime += dt;
+        if (p.seatSlot !== null && p.seatSlot >= 0) p.seatedTokenTime += dt;
+        else p.standingTime += dt; // Overflow beyond 20 chairs counts honestly as standing
+      } else if (p.state === 'QUEUE_PHARM') {
+        p.pharmWaitTime += dt; p.standingTime += dt;
+      }
+    }
+
+    this.updateAgentTargets();
+  }
+
+  updateAgentTargets() {
+    this.regQueue.forEach((p, idx) => {
+      const col = Math.floor(idx / 9);
+      const row = idx % 9;
+      const dir = col % 2 === 0 ? 1 : -1;
+      p.targetX = Math.max(14, LAYOUT.regQueueOrigin.x - col * 13);
+      p.targetY = (col % 2 === 0 ? 165 : 293) + dir * row * 16;
+    });
+
+    this.regServers.forEach((p, idx) => {
+      if (p) {
+        p.targetX = LAYOUT.regCounters[0].x - 10;
+        p.targetY = counterY(idx, this.regServers.length);
+      }
+    });
+
+    this.triageQueue.forEach((p, idx) => {
+      const col = idx % 7, row = Math.floor(idx / 7);
+      p.targetX = LAYOUT.triageDesk.x - 14 - col * 13;
+      p.targetY = LAYOUT.triageDesk.y + (row - 0.5) * 14;
+    });
+    this.triageServers.forEach((p, i) => {
+      if (p) {
+        p.targetX = LAYOUT.triageDesk.x + 6;
+        p.targetY = LAYOUT.triageDesk.y + (i - (this.triageServers.length - 1) / 2) * 14;
+      }
+    });
+
+    for (const p of this.patients) {
+      if (p.state === 'WALKING_TO_VITALS') {
+        const dLayout = LAYOUT.depts[p.deptId];
+        p.targetX = 210;
+        p.targetY = p.isAppt ? dLayout.vitalsApptQueueOrigin.y : dLayout.yCenter;
+      }
+    }
+
+    this.deptState.forEach((dept, dId) => {
+      const dLayout = LAYOUT.depts[dId];
+      if (this.mode === 'current') {
+        dept.vitalsQueueSingle.forEach((p, idx) => {
+          const col = idx % 8, row = Math.floor(idx / 8);
+          p.targetX = dLayout.vitalsSingleQueueOrigin.x - col * 13;
+          p.targetY = dLayout.vitalsSingleQueueOrigin.y + (row % 2 === 0 ? 1 : -1) * Math.ceil(row / 2) * 14;
+        });
+      } else {
+        dept.vitalsQueueAppt.forEach((p, idx) => {
+          const col = idx % 8, row = Math.floor(idx / 8);
+          p.targetX = dLayout.vitalsApptQueueOrigin.x - col * 13;
+          p.targetY = dLayout.vitalsApptQueueOrigin.y - row * 12;
+        });
+        dept.vitalsQueueWalk.forEach((p, idx) => {
+          const col = idx % 8, row = Math.floor(idx / 8);
+          p.targetX = dLayout.vitalsWalkQueueOrigin.x - col * 13;
+          p.targetY = dLayout.vitalsWalkQueueOrigin.y + row * 12;
+        });
+      }
+
+      dept.vitalsServers.forEach((p, n) => {
+        if (p) {
+          p.targetX = dLayout.vitalsDesk.x - 8;
+          p.targetY = dLayout.vitalsDesk.y + (n - (dept.vitalsServers.length - 1) / 2) * 14;
+        }
+      });
+
+      if (this.mode === 'current') {
+        dept.consultQueue.forEach((p, idx) => {
+          const col = Math.floor(idx / 5), row = idx % 5;
+          p.targetX = dLayout.consultDoorQueueOrigin.x - col * 13;
+          p.targetY = dLayout.consultDoorQueueOrigin.y - 32 + row * 16;
+        });
+      } else {
+        // Persistent chair coordinates: patients stay in their assigned chair (0..19)
+        const box = dLayout.tokenLoungeBox;
+        let overflowIdx = 0;
+        dept.consultQueue.forEach(p => {
+          if (p.seatSlot !== null && p.seatSlot >= 0) {
+            const seatCol = p.seatSlot % 5;
+            const seatRow = Math.floor(p.seatSlot / 5);
+            p.targetX = box.x + 18 + seatCol * 20;
+            p.targetY = box.y + 24 + seatRow * 22;
+          } else {
+            // Neat overflow line along back edge of lounge if >20 waiting
+            p.targetX = box.x + 12 + (overflowIdx % 8) * 12;
+            p.targetY = box.y + box.h - 6;
+            overflowIdx++;
+          }
+        });
+      }
+
+      dept.consultServers.forEach((p, docIdx) => {
+        if (p) {
+          p.targetX = dLayout.consultRoom.x + 8;
+          p.targetY = doctorY(dLayout.consultRoom.y, docIdx, dept.consultServers.length);
+        }
+      });
+    });
+
+    this.pharmQueue.forEach((p, idx) => {
+      const col = Math.floor(idx / 8), row = idx % 8;
+      p.targetX = LAYOUT.pharmQueueOrigin.x - col * 13;
+      p.targetY = 175 + row * 17;
+    });
+
+    this.pharmServers.forEach((p, idx) => {
+      if (p) {
+        p.targetX = LAYOUT.pharmacyCounters[0].x - 10;
+        p.targetY = counterY(idx, this.pharmServers.length);
+      }
+    });
+  }
+
+  // Frame-independent 60 FPS position smoothing called from animateLoop()
+  interpolatePositions(alpha) {
+    for (const p of this.patients) {
+      if (p.state !== 'NOT_ARRIVED' && p.state !== 'COMPLETED') {
+        p.x += (p.targetX - p.x) * alpha;
+        p.y += (p.targetY - p.y) * alpha;
+      }
+    }
+  }
+}
+
+const simCurrent = new HospitalSimulation('current');
+const simProposed = new HospitalSimulation('proposed');
+
+// ============================================================================
+// 2. THREE.JS 3D SCENE, SHARED GEOMETRIES, SIGNAGE & AVATAR POOL
+// ============================================================================
+const canvas3d = document.getElementById('webglCanvas');
+const viewportEl = document.getElementById('viewportContainer');
+const labelLayer = document.getElementById('labelLayer');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xe6ebf0);
+scene.fog = new THREE.FogExp2(0xe6ebf0, 0.0022);
+
+const camera = new THREE.PerspectiveCamera(42, 16 / 9, 1, 600);
+camera.position.set(0, 88, 108);
+
+const renderer = new THREE.WebGLRenderer({ canvas: canvas3d, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.maxPolarAngle = Math.PI / 2 - 0.04;
+controls.minDistance = 18;
+controls.maxDistance = 210;
+controls.target.set(0, 0, 2);
+
+// Lighting
+const hemiLight = new THREE.HemisphereLight(0xffffff, 0xcbd5e1, 0.78);
+hemiLight.position.set(0, 120, 0);
+scene.add(hemiLight);
+
+const dirLight = new THREE.DirectionalLight(0xfffcf5, 0.72);
+dirLight.position.set(35, 95, 55);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.width = 2048;
+dirLight.shadow.mapSize.height = 2048;
+dirLight.shadow.camera.left = -70;
+dirLight.shadow.camera.right = 70;
+dirLight.shadow.camera.top = 55;
+dirLight.shadow.camera.bottom = -55;
+scene.add(dirLight);
+
+const SCALE_X = 84 / LOGICAL_W;
+const SCALE_Z = 34 / LOGICAL_H;
+const WING_Z_CUR = -20;
+const WING_Z_PROP = 20;
+
+function toWorldX(lx) { return (lx - LOGICAL_W / 2) * SCALE_X; }
+function toWorldZ(ly, isProposed) {
+  return (isProposed ? WING_Z_PROP : WING_Z_CUR) + (ly - LOGICAL_H / 2) * SCALE_Z;
+}
+
+// Shared Unit Geometries (Zero GPU memory leak on slider drag / reset!)
+const GEO = {
+  box: new THREE.BoxGeometry(1, 1, 1),
+  torso: new THREE.CylinderGeometry(0.34, 0.40, 1.35, 14),
+  head: new THREE.SphereGeometry(0.30, 14, 14),
+  ring: new THREE.RingGeometry(0.58, 0.82, 24),
+  staffBody: new THREE.CylinderGeometry(0.32, 0.38, 1.35, 12),
+  staffHead: new THREE.SphereGeometry(0.28, 12, 12)
+};
+GEO.ring.rotateX(-Math.PI / 2);
+
+const MAT = {
+  floorBase: new THREE.MeshStandardMaterial({ color: 0xf4f1ea, roughness: 0.9 }),
+  zoneReg: new THREE.MeshStandardMaterial({ color: 0xe9e0d1, roughness: 0.85 }),
+  zoneVit: new THREE.MeshStandardMaterial({ color: 0xdce7f0, roughness: 0.85 }),
+  zoneStand: new THREE.MeshStandardMaterial({ color: 0xf4ded9, roughness: 0.85 }),
+  zoneLounge: new THREE.MeshStandardMaterial({ color: 0xd9ece7, roughness: 0.85 }),
+  zonePharm: new THREE.MeshStandardMaterial({ color: 0xe6e1ee, roughness: 0.85 }),
+  wallCur: new THREE.MeshStandardMaterial({ color: 0xc85a4f, roughness: 0.6 }),
+  wallProp: new THREE.MeshStandardMaterial({ color: 0x1f8a7e, roughness: 0.6 }),
+  glassWall: new THREE.MeshStandardMaterial({ color: 0xcbd5e1, transparent: true, opacity: 0.45, roughness: 0.3 }),
+  deskWhite: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 }),
+  chairTeal: new THREE.MeshStandardMaterial({ color: 0x99cbc2, roughness: 0.6 }),
+  bypassLane: new THREE.MeshStandardMaterial({ color: 0x3b6fd8, transparent: true, opacity: 0.25 }),
+  appt: new THREE.MeshStandardMaterial({ color: 0x3b6fd8, roughness: 0.35 }),
+  walk: new THREE.MeshStandardMaterial({ color: 0xc2621f, roughness: 0.4 }),
+  walkPin: new THREE.MeshStandardMaterial({ color: 0xe89b48, roughness: 0.4 }),
+  headSkin: new THREE.MeshStandardMaterial({ color: 0xf6d5b8, roughness: 0.5 }),
+  // Role-specific Staff Uniforms
+  staffDoctor: new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.3 }),
+  staffNurse: new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.4 }),
+  staffClerk: new THREE.MeshStandardMaterial({ color: 0x0f766e, roughness: 0.45 }),
+  ringAnitha: new THREE.MeshBasicMaterial({ color: 0x0f172a, side: THREE.DoubleSide }),
+  ringJeevan: new THREE.MeshBasicMaterial({ color: 0x6b5b95, side: THREE.DoubleSide })
+};
+
+// Cached 3D Signboard Generator (CanvasTexture)
+const signCache = new Map();
+function create3DSignMesh(text, bgHex, fgHex, wWorld, hWorld, flatOnFloor = false) {
+  const key = `${text}|${bgHex}|${fgHex}|${flatOnFloor}`;
+  let mat = signCache.get(key);
+  if (!mat) {
+    const cv = document.createElement('canvas');
+    cv.width = 512; cv.height = 96;
+    const c = cv.getContext('2d');
+    c.fillStyle = bgHex;
+    c.beginPath();
+    c.roundRect(4, 4, 504, 88, 16);
+    c.fill();
+    c.fillStyle = fgHex;
+    c.font = '700 34px "Inter", "Segoe UI", Arial, sans-serif';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText(text, 256, 50);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.anisotropy = 4;
+    mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide });
+    signCache.set(key, mat);
+  }
+  const geo = new THREE.PlaneGeometry(wWorld, hWorld);
+  if (flatOnFloor) geo.rotateX(-Math.PI / 2);
+  else geo.rotateX(-0.35);
+  return new THREE.Mesh(geo, mat);
+}
+
+let architectureGroup = new THREE.Group();
+scene.add(architectureGroup);
+
+function addScaledBox(parent, w, h, d, wx, wy, wz, mat, cast = false) {
+  const mesh = new THREE.Mesh(GEO.box, mat);
+  mesh.scale.set(w, h, d);
+  mesh.position.set(wx, wy, wz);
+  mesh.receiveShadow = true;
+  mesh.castShadow = cast;
+  parent.add(mesh);
+  return mesh;
+}
+
+function addZoneTile(parent, lx, ly, lw, lh, yHeight, mat, isProposed) {
+  const w = lw * SCALE_X, d = lh * SCALE_Z;
+  const cx = toWorldX(lx + lw / 2);
+  const cz = toWorldZ(ly + lh / 2, isProposed);
+  return addScaledBox(parent, w, yHeight, d, cx, yHeight / 2, cz, mat, false);
+}
+
+function addDesk3D(parent, lx, ly, wUnit, dUnit, hUnit, isProposed, staffMat) {
+  const wx = toWorldX(lx), wz = toWorldZ(ly, isProposed);
+  addScaledBox(parent, wUnit, hUnit, dUnit, wx, hUnit / 2, wz, MAT.deskWhite, true);
+
+  if (staffMat) {
+    const staff = new THREE.Group();
+    const body = new THREE.Mesh(GEO.staffBody, staffMat);
+    body.position.y = 0.68;
+    body.castShadow = true;
+    const head = new THREE.Mesh(GEO.staffHead, MAT.headSkin);
+    head.position.y = 1.55;
+    head.castShadow = true;
+    staff.add(body, head);
+    staff.position.set(wx + wUnit * 0.65, 0, wz);
+    parent.add(staff);
+  }
+}
+
+function buildHospitalArchitecture() {
+  scene.remove(architectureGroup);
+  architectureGroup = new THREE.Group();
+
+  [false, true].forEach(isProposed => {
+    const wingZ = isProposed ? WING_Z_PROP : WING_Z_CUR;
+    // Main Floor Slab
+    addScaledBox(architectureGroup, 86, 0.4, 35.5, 0, -0.2, wingZ, MAT.floorBase, false);
+
+    // Back Spine Wall
+    addScaledBox(architectureGroup, 86, 0.95, 0.55, 0, 0.48, wingZ - 17.5, isProposed ? MAT.wallProp : MAT.wallCur, false);
+
+    // 3D Wing Title Banner along Spine
+    const wingTitle = isProposed
+      ? 'PROPOSED WING: 50% APPT BYPASS + VITALS TOKENS'
+      : 'TODAY WING: 100% WALK-IN QUEUES (NO TOKENS)';
+    const wingSign = create3DSignMesh(wingTitle, isProposed ? '#1f8a7e' : '#c85a4f', '#ffffff', 28, 2.5, false);
+    wingSign.position.set(-25, 2.3, wingZ - 17.3);
+    architectureGroup.add(wingSign);
+
+    // 4 Zone Headers along back spine
+    const zones = [
+      ['1. REGISTRATION', 92],
+      ['2. DEPT VITALS', 275],
+      ['3. CONSULTATION', 475],
+      ['4. PHARMACY', 675]
+    ];
+    zones.forEach(([txt, lx]) => {
+      const zs = create3DSignMesh(txt, '#1e293b', '#f8fafc', 11.5, 1.5, false);
+      zs.position.set(toWorldX(lx), 1.85, wingZ - 17.2);
+      architectureGroup.add(zs);
+    });
+
+    // Zone Floor Pads
+    addZoneTile(architectureGroup, 8, 34, 172, 424, 0.08, MAT.zoneReg, isProposed);
+    addZoneTile(architectureGroup, 596, 34, 158, 424, 0.08, MAT.zonePharm, isProposed);
+
+    if (isProposed) {
+      // Express Appointment Bypass Carpets
+      addZoneTile(architectureGroup, 20, 36, 265, 16, 0.11, MAT.bypassLane, true);
+      addZoneTile(architectureGroup, 20, 440, 265, 16, 0.11, MAT.bypassLane, true);
+      const bypassSign = create3DSignMesh('EXPRESS APPT BYPASS → VITALS', '#3b6fd8', '#ffffff', 14, 1.3, true);
+      bypassSign.position.set(toWorldX(145), 0.14, toWorldZ(44, true));
+      architectureGroup.add(bypassSign);
+
+      // Triage Zone Pad & Desks (Nurse in Sky-Blue Scrubs)
+      addZoneTile(architectureGroup, 34, LAYOUT.triageDesk.y - 32, 142, 56, 0.12, MAT.zoneVit, true);
+      const triSign = create3DSignMesh('PIN TRIAGE DESK', '#0284c7', '#ffffff', 8.5, 1.1, true);
+      triSign.position.set(toWorldX(100), 0.15, toWorldZ(LAYOUT.triageDesk.y - 22, true));
+      architectureGroup.add(triSign);
+
+      for (let i = 0; i < params.triageCounters; i++) {
+        const ty = LAYOUT.triageDesk.y + (i - (params.triageCounters - 1) / 2) * 18;
+        addDesk3D(architectureGroup, LAYOUT.triageDesk.x + 10, ty, 1.4, 1.8, 1.1, true, MAT.staffNurse);
+      }
+    }
+
+    // Registration Counters (Clerks in Teal Uniform)
+    for (let i = 0; i < params.regCounters; i++) {
+      const ry = counterY(i, params.regCounters);
+      addDesk3D(architectureGroup, LAYOUT.regCounters[0].x + 12, ry, 1.6, 2.2, 1.15, isProposed, MAT.staffClerk);
+    }
+
+    // Departments A & B
+    LAYOUT.depts.forEach((dLayout, dId) => {
+      const topY = dId === 0 ? 52 : 272;
+      addZoneTile(architectureGroup, 190, topY + 22, 180, 139, 0.08, MAT.zoneVit, isProposed);
+
+      // Department Floor Sign
+      const deptSign = create3DSignMesh(dLayout.name, '#334155', '#ffffff', 12, 1.25, true);
+      deptSign.position.set(toWorldX(280), 0.12, toWorldZ(topY + 12, isProposed));
+      architectureGroup.add(deptSign);
+
+      // Vitals Desks (Nurses in Sky Scrubs)
+      for (let n = 0; n < params.vitalsNurses; n++) {
+        const vy = dLayout.vitalsDesk.y + (n - (params.vitalsNurses - 1) / 2) * 20;
+        addDesk3D(architectureGroup, dLayout.vitalsDesk.x + 12, vy, 1.6, 2.1, 1.1, isProposed, MAT.staffNurse);
+      }
+
+      if (!isProposed) {
+        addZoneTile(architectureGroup, 390, topY + 24, 115, 125, 0.09, MAT.zoneStand, false);
+        const standSign = create3DSignMesh('STANDING CROWD', '#c85a4f', '#ffffff', 9.5, 1.1, true);
+        standSign.position.set(toWorldX(446), 0.13, toWorldZ(topY + 140, false));
+        architectureGroup.add(standSign);
+      } else {
+        const lb = dLayout.tokenLoungeBox;
+        addZoneTile(architectureGroup, lb.x, lb.y, lb.w, lb.h, 0.09, MAT.zoneLounge, true);
+        const loungeSign = create3DSignMesh('SEATED TOKEN LOUNGE', '#1f8a7e', '#ffffff', 10.5, 1.1, true);
+        loungeSign.position.set(toWorldX(lb.x + lb.w / 2), 0.13, toWorldZ(lb.y + lb.h - 6, true));
+        architectureGroup.add(loungeSign);
+
+        // 4x5 Grid of 3D Lounge Chairs
+        for (let r = 0; r < 4; r++) {
+          for (let c = 0; c < 5; c++) {
+            const seatX = toWorldX(lb.x + 18 + c * 20);
+            const seatZ = toWorldZ(lb.y + 24 + r * 22, true);
+            addScaledBox(architectureGroup, 0.95, 0.45, 0.95, seatX, 0.25, seatZ, MAT.chairTeal, false);
+            addScaledBox(architectureGroup, 0.2, 0.65, 0.95, seatX - 0.38, 0.58, seatZ, MAT.chairTeal, false);
+          }
+        }
+      }
+
+      // Consultation Room Partition & Doctor Desks (Doctors in White Coats)
+      const roomW = 54 * SCALE_X, roomD = 98 * SCALE_Z;
+      const roomX = toWorldX(dLayout.consultRoom.x + 14);
+      const roomZ = toWorldZ(dLayout.consultRoom.y, isProposed);
+      addScaledBox(architectureGroup, roomW, 2.2, roomD, roomX, 1.1, roomZ, MAT.glassWall, false);
+
+      for (let docIdx = 0; docIdx < params.doctorsPerDept; docIdx++) {
+        const dy = doctorY(dLayout.consultRoom.y, docIdx, params.doctorsPerDept);
+        addDesk3D(architectureGroup, dLayout.consultRoom.x + 22, dy, 1.5, 1.9, 1.1, isProposed, MAT.staffDoctor);
+      }
+    });
+
+    // Pharmacy Counters
+    for (let i = 0; i < params.pharmCounters; i++) {
+      const py = counterY(i, params.pharmCounters);
+      addDesk3D(architectureGroup, LAYOUT.pharmacyCounters[0].x + 12, py, 1.7, 2.3, 1.15, isProposed, MAT.staffClerk);
+    }
+  });
+
+  scene.add(architectureGroup);
+}
+
+// Reusable Pool of 3D Patient Avatars
+const avatarPool = { current: new Map(), proposed: new Map() };
+const pickableMeshes = [];
+
+function createPatientAvatarMesh() {
+  const group = new THREE.Group();
+
+  const torso = new THREE.Mesh(GEO.torso, MAT.walk);
+  torso.position.y = 0.72;
+  torso.castShadow = true;
+
+  const head = new THREE.Mesh(GEO.head, MAT.headSkin);
+  head.position.y = 1.62;
+  head.castShadow = true;
+
+  const ring = new THREE.Mesh(GEO.ring, MAT.ringAnitha);
+  ring.position.y = 0.08;
+  ring.visible = false;
+
+  group.add(torso, head, ring);
+  group.userData = { torso, head, ring, patient: null, mode: null };
+  pickableMeshes.push(torso, head);
+  return group;
+}
+
+function syncAvatars3D(sim, isProposed) {
+  const map = isProposed ? avatarPool.proposed : avatarPool.current;
+  // Hide any pooled avatars beyond current patient count
+  for (const [id, av] of map.entries()) {
+    if (id > sim.patients.length) av.visible = false;
+  }
+
+  for (const p of sim.patients) {
+    let avatar = map.get(p.id);
+    if (!avatar) {
+      avatar = createPatientAvatarMesh();
+      scene.add(avatar);
+      map.set(p.id, avatar);
+    }
+
+    const active = p.state !== 'NOT_ARRIVED' && p.state !== 'COMPLETED';
+    avatar.visible = active;
+    if (!active) continue;
+
+    avatar.userData.patient = p;
+    avatar.userData.mode = isProposed ? 'PROPOSED' : 'TODAY';
+    avatar.userData.torso.userData = avatar.userData;
+    avatar.userData.head.userData = avatar.userData;
+
+    avatar.userData.torso.material = p.isAppt
+      ? MAT.appt
+      : (isProposed && p.hasPin ? MAT.walkPin : MAT.walk);
+
+    // Seated vs Standing posture in 3D (only seated if assigned a chair 0..19)
+    const isSeated = p.state === 'SEATED_TOKEN_LOUNGE' && p.seatSlot !== null && p.seatSlot >= 0;
+    avatar.userData.torso.scale.y = isSeated ? 0.68 : 1.0;
+    avatar.userData.torso.position.y = isSeated ? 0.52 : 0.72;
+    avatar.userData.head.position.y = isSeated ? 1.18 : 1.62;
+
+    if (p.id === followId) {
+      avatar.userData.ring.visible = true;
+      avatar.userData.ring.material = MAT.ringAnitha;
+    } else if (p.id === jeevanId) {
+      avatar.userData.ring.visible = true;
+      avatar.userData.ring.material = MAT.ringJeevan;
+    } else {
+      avatar.userData.ring.visible = false;
+    }
+
+    const wx = toWorldX(p.x);
+    const wz = toWorldZ(p.y, isProposed);
+    avatar.position.set(wx, 0, wz);
+  }
+}
+
+// Projected 2D HTML Labels over 3D Scene
+const domLabels = {};
+function ensureDomLabel(key, cls) {
+  if (!domLabels[key]) {
+    const el = document.createElement('div');
+    el.className = 'lbl3d ' + cls;
+    labelLayer.appendChild(el);
+    domLabels[key] = el;
+  }
+  return domLabels[key];
+}
+
+function projectToScreen(wx, wy, wz, width, height) {
+  const v = new THREE.Vector3(wx, wy, wz);
+  v.project(camera);
+  if (v.z > 1) return null;
+  return {
+    x: (v.x * 0.5 + 0.5) * width,
+    y: (-v.y * 0.5 + 0.5) * height
+  };
+}
+
+function updateProjectedLabels() {
+  const rect = viewportEl.getBoundingClientRect();
+  const W = rect.width, H = rect.height;
+
+  [0, 1].forEach(dId => {
+    const dLayout = LAYOUT.depts[dId];
+    const dept = simProposed.deptState[dId];
+    const lbl = ensureDomLabel('board_' + dId, 'board');
+    const pt = projectToScreen(toWorldX(dLayout.consultRoom.x), 3.1, toWorldZ(dLayout.consultRoom.y, true), W, H);
+    if (pt) {
+      lbl.style.display = 'block';
+      lbl.style.left = `${pt.x}px`;
+      lbl.style.top = `${pt.y}px`;
+      lbl.textContent = `Dept ${dept.prefix} · Now ${dept.nowServingToken}`;
+    } else {
+      lbl.style.display = 'none';
+    }
+  });
+
+  const tracked = [
+    { key: 'anitha_cur', sim: simCurrent, isProp: false, id: followId, name: followName, cls: 'char-anitha' },
+    { key: 'anitha_prop', sim: simProposed, isProp: true, id: followId, name: followName, cls: 'char-anitha' },
+    { key: 'jeevan_cur', sim: simCurrent, isProp: false, id: jeevanId, name: 'Jeevan', cls: 'char-jeevan' },
+    { key: 'jeevan_prop', sim: simProposed, isProp: true, id: jeevanId, name: 'Jeevan', cls: 'char-jeevan' }
+  ];
+
+  tracked.forEach(item => {
+    const el = ensureDomLabel(item.key, item.cls);
+    const p = item.sim.patients.find(q => q.id === item.id);
+    if (!p || p.state === 'NOT_ARRIVED' || p.state === 'COMPLETED') {
+      el.style.display = 'none';
+      return;
+    }
+    const pt = projectToScreen(toWorldX(p.x), 2.35, toWorldZ(p.y, item.isProp), W, H);
+    if (pt) {
+      el.style.display = 'block';
+      el.style.left = `${pt.x}px`;
+      el.style.top = `${pt.y}px`;
+      el.textContent = p.tokenLabel ? `${item.name} (${p.tokenLabel})` : item.name;
+    } else {
+      el.style.display = 'none';
+    }
+  });
+}
+
+// Camera Presets & Free-Orbit Character Tracking
+let activeCameraPreset = 'overview';
+let camGoalPos = new THREE.Vector3(0, 88, 108);
+let camGoalTarget = new THREE.Vector3(0, 0, 2);
+let isTransitioningCam = false;
+let followAnchorInitialized = false;
+
+function setCameraView(preset) {
+  activeCameraPreset = preset;
+  document.querySelectorAll('.cam-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.cam === preset);
+  });
+
+  if (preset === 'overview') {
+    camGoalPos.set(0, 88, 108);
+    camGoalTarget.set(0, 0, 2);
+    isTransitioningCam = true;
+  } else if (preset === 'reg') {
+    camGoalPos.set(-34, 42, 58);
+    camGoalTarget.set(-28, 0, 2);
+    isTransitioningCam = true;
+  } else if (preset === 'vitals') {
+    camGoalPos.set(-10, 44, 62);
+    camGoalTarget.set(-11, 0, 2);
+    isTransitioningCam = true;
+  } else if (preset === 'consult') {
+    camGoalPos.set(14, 42, 60);
+    camGoalTarget.set(10, 0, 4);
+    isTransitioningCam = true;
+  } else if (preset === 'anitha' || preset === 'jeevan') {
+    followAnchorInitialized = false;
+    isTransitioningCam = false;
+  }
+}
+
+document.querySelectorAll('.cam-btn').forEach(btn => {
+  btn.addEventListener('click', () => setCameraView(btn.dataset.cam));
+});
+
+controls.addEventListener('start', () => {
+  isTransitioningCam = false;
+});
+
+// Raycasting for 3D Hover & Click Patient Selection
+const raycaster = new THREE.Raycaster();
+const mouseNDC = new THREE.Vector2();
+
+function pickPatientAtEvent(e) {
+  const rect = canvas3d.getBoundingClientRect();
+  mouseNDC.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  mouseNDC.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(mouseNDC, camera);
+  const hits = raycaster.intersectObjects(pickableMeshes, false);
+  for (const h of hits) {
+    if (h.object.parent && h.object.parent.visible && h.object.userData.patient) {
+      return h.object.userData;
+    }
+  }
+  return null;
+}
+
+canvas3d.addEventListener('mousemove', e => {
+  const hit = pickPatientAtEvent(e);
+  const inspector = document.getElementById('agentInspector');
+  if (hit && hit.patient) {
+    const p = hit.patient;
+    const deptName = p.deptId === 0 ? 'Dept A (Medicine)' : 'Dept B (Ortho)';
+    const kind = hit.mode === 'TODAY'
+      ? 'Walk-In'
+      : p.isAppt ? 'Booked Appt' : p.hasPin ? 'Walk-In (PIN)' : 'Walk-In (No PIN)';
+    const tok = p.tokenLabel ? ` · Token ${p.tokenLabel}` : '';
+    const chairTxt = (p.state === 'SEATED_TOKEN_LOUNGE' && p.seatSlot >= 0) ? ` · Chair #${p.seatSlot + 1}` : '';
+    inspector.innerHTML = `<b>[${hit.mode}] Patient #${p.id}</b> · ${kind} · ${deptName}${tok}${chairTxt} · Standing: <b>${p.standingTime.toFixed(1)}m</b> · Seated: <b>${p.seatedTokenTime.toFixed(1)}m</b>`;
+    canvas3d.style.cursor = 'pointer';
+  } else {
+    canvas3d.style.cursor = 'grab';
+  }
+});
+
+canvas3d.addEventListener('click', e => {
+  const hit = pickPatientAtEvent(e);
+  if (!hit || !hit.patient) return;
+  followId = hit.patient.id;
+  followName = followId === defaultFollowId ? 'Anitha' : `Patient #${followId}`;
+  updateDashboardUI(true);
+});
+
+function resize3D() {
+  const rect = viewportEl.getBoundingClientRect();
+  camera.aspect = rect.width / rect.height;
+  camera.updateProjectionMatrix();
+  renderer.setSize(rect.width, rect.height, false);
+}
+window.addEventListener('resize', resize3D);
+
+// ============================================================================
+// 3. METRICS, CHECKPOINT TABLE & NARRATIVE UI
+// ============================================================================
+function computeStats(sim) {
+  const served = sim.completedPatients;
+  const active = sim.patients.filter(p => p.state !== 'NOT_ARRIVED' && p.state !== 'COMPLETED');
+  const allEntered = [...served, ...active];
+  const safeAvg = (arr, fn) => arr.length === 0 ? 0 : arr.reduce((a, x) => a + fn(x), 0) / arr.length;
+
+  const appts = allEntered.filter(p => p.isAppt);
+  const walks = allEntered.filter(p => !p.isAppt);
+  const walksNoPin = walks.filter(p => !p.hasPin);
+
+  const avgStanding = safeAvg(allEntered, p => p.standingTime);
+  const avgStandingAppt = safeAvg(appts, p => p.standingTime);
+  const avgStandingWalk = safeAvg(walks, p => p.standingTime);
+  const avgSeated = safeAvg(allEntered, p => p.seatedTokenTime);
+
+  const avgRegWait = safeAvg(allEntered, p => p.regWaitTime);
+  const avgRegWaitWalkNoPin = safeAvg(walksNoPin, p => p.regWaitTime);
+
+  const avgVitWait = safeAvg(allEntered, p => p.vitalsWaitTime);
+  const avgVitWaitAppt = safeAvg(appts, p => p.vitalsWaitTime);
+  const avgVitWaitWalk = safeAvg(walks, p => p.vitalsWaitTime);
+
+  const avgConWait = safeAvg(allEntered, p => p.consultWaitTime);
+  const avgPharmWait = safeAvg(allEntered, p => p.pharmWaitTime);
+
+  const tatPool = served.length >= 5 ? served : allEntered;
+  const avgTat = safeAvg(tatPool, p => p.completionTime ? (p.completionTime - p.arrivalTime) : (p.standingTime + p.seatedTokenTime + 10));
+  const avgTatAppt = safeAvg(tatPool.filter(p => p.isAppt), p => p.completionTime ? (p.completionTime - p.arrivalTime) : (p.standingTime + p.seatedTokenTime + 8));
+  const avgTatWalk = safeAvg(tatPool.filter(p => !p.isAppt), p => p.completionTime ? (p.completionTime - p.arrivalTime) : (p.standingTime + p.seatedTokenTime + 10));
+
+  return {
+    activeCount: active.length,
+    doneCount: served.length,
+    avgStanding, avgStandingAppt, avgStandingWalk, avgSeated,
+    avgRegWait, avgRegWaitWalkNoPin,
+    avgVitWait, avgVitWaitAppt, avgVitWaitWalk,
+    avgConWait, avgPharmWait,
+    avgTat, avgTatAppt, avgTatWalk
+  };
+}
+
+function formatClock(minsFrom730) {
+  const totalMins = SIM_START_MIN + Math.floor(minsFrom730);
+  const hrs24 = Math.floor(totalMins / 60);
+  const mins = totalMins % 60;
+  const period = hrs24 >= 12 ? 'PM' : 'AM';
+  const hrs12 = hrs24 > 12 ? hrs24 - 12 : (hrs24 === 0 ? 12 : hrs24);
+  return `${String(hrs12).padStart(2, '0')}:${String(mins).padStart(2, '0')} ${period}`;
+}
+
+const STAGE_TEXT = {
+  NOT_ARRIVED: 'not arrived yet',
+  QUEUE_REG: 'standing in the registration queue',
+  SERVING_REG: 'at the registration counter',
+  WALKING_TO_VITALS: 'walking to department vitals',
+  QUEUE_TRIAGE: 'at the PIN triage line',
+  SERVING_TRIAGE: 'being routed at triage desk',
+  QUEUE_VITALS_SINGLE: 'standing in the single vitals line',
+  QUEUE_VITALS_APPT: 'in the appointment lane at vitals',
+  QUEUE_VITALS_WALK: 'in the walk-in lane at vitals',
+  SERVING_VITALS: 'having vitals recorded',
+  QUEUE_CONSULT_STANDING: 'standing crowded at the doctor\'s door (no token)',
+  SEATED_TOKEN_LOUNGE: 'seated in the lounge waiting for token call',
+  SERVING_CONSULT: 'in consultation with the doctor',
+  QUEUE_PHARM: 'standing in the pharmacy line',
+  SERVING_PHARM: 'collecting medicines at pharmacy',
+  COMPLETED: 'completed visit and left OPD'
+};
+
+function pickDefaultCharacters() {
+  const walk = simProposed.patients.filter(p => !p.isAppt && !p.hasPin).sort((a, b) => a.arrivalTime - b.arrivalTime);
+  const cand = walk.filter(p => p.deptId === 0);
+  const pick = (cand.length ? cand : walk)[Math.floor((cand.length ? cand : walk).length * 0.25)];
+  followId = pick ? pick.id : 1;
+  defaultFollowId = followId;
+  followName = 'Anitha';
+
+  const booked = simProposed.patients.filter(p => p.isAppt && p.id !== followId);
+  const pool = booked.filter(p => p.deptId === 1).length ? booked.filter(p => p.deptId === 1) : booked;
+  pool.sort((a, b) => Math.abs(a.slotTime - 95) - Math.abs(b.slotTime - 95));
+  jeevanId = pool.length ? pool[0].id : 2;
+}
+
+function describePerson(sim, id, labelName) {
+  const p = sim.patients.find(q => q.id === id);
+  if (!p) return '';
+  let st = STAGE_TEXT[p.state] || p.state;
+  if (p.state === 'SEATED_TOKEN_LOUNGE' && p.tokenLabel) {
+    const chairStr = p.seatSlot >= 0 ? `, Chair #${p.seatSlot + 1}` : ' (overflow)';
+    st = `seated with ${p.tokenLabel}${chairStr} (Now ${sim.deptState[p.deptId].nowServingToken})`;
+  }
+  if (p.state === 'NOT_ARRIVED') {
+    return p.isAppt
+      ? `${labelName}: at home · reserved #${sim.deptState[p.deptId].prefix}${p.reservedToken} (slot ${formatClock(p.slotTime)}, arrives ${formatClock(p.arrivalTime)})`
+      : `${labelName}: arrives at ${formatClock(p.arrivalTime)}`;
+  }
+  return `${labelName}: ${st} (standing ${p.standingTime.toFixed(1)}m).`;
+}
+
+function renderWaitTable() {
+  const body = document.getElementById('wtBody');
+  if (!body) return;
+  const done = simTime >= SIM_DURATION_MAX;
+  document.getElementById('wtState').textContent = done ? 'final morning summary (01:30 PM)' : 'live at ' + formatClock(simTime);
+  const shade = v => v >= 30 ? 'red' : v >= 15 ? 'amb' : '';
+  const cell = (v, skip, sh) => skip ? '<td class="na">skipped</td>' : (v == null ? '<td class="na">–</td>' : `<td class="${sh ? shade(v) : ''}">${v.toFixed(1)}</td>`);
+  const avg = (a, f) => a.length ? a.reduce((x, p) => x + f(p), 0) / a.length : null;
+  const viaTriage = !!params.bookedViaTriage;
+
+  const row = (name, a, mode, kind) => {
+    if (!a.length) return `<tr><td>${name}</td><td class="na" colspan="7">no arrivals yet</td></tr>`;
+    const fin = a.filter(p => p.completionTime != null);
+    const skReg = kind === 'booked' || kind === 'pin';
+    const skTri = mode === 'current' || kind === 'walk' || (kind === 'booked' && !viaTriage);
+    const tot = avg(fin, p => p.completionTime - p.arrivalTime);
+    return `<tr><td>${name}</td>${cell(avg(a, p => p.regWaitTime), skReg, 1)}${cell(avg(a, p => p.triageWaitTime || 0), skTri, 1)}${cell(avg(a, p => p.vitalsWaitTime), 0, 1)}${cell(avg(a, p => p.consultWaitTime), 0, 1)}${cell(avg(a, p => p.pharmWaitTime), 0, 1)}${cell(avg(a, p => p.standingTime), 0, 0)}<td class="tot">${tot == null ? '–' : tot.toFixed(1)} <span class="n">(${fin.length}/${a.length} done)</span></td></tr>`;
+  };
+
+  const personRow = (name, sim, id) => {
+    const p = sim.patients.find(q => q.id === id);
+    const lbl = `${name} — ${sim.mode === 'current' ? 'Today' : 'Proposed'}`;
+    if (!p || p.state === 'NOT_ARRIVED') {
+      return `<tr><td>${lbl}</td><td class="na" colspan="7">not arrived yet${p ? ' (arr ' + formatClock(p.arrivalTime) + ')' : ''}</td></tr>`;
+    }
+    const kind = sim.mode === 'current' ? 'walk' : p.isAppt ? 'booked' : p.hasPin ? 'pin' : 'walk';
+    const skReg = kind === 'booked' || kind === 'pin';
+    const skTri = sim.mode === 'current' || kind === 'walk' || (kind === 'booked' && !viaTriage);
+    const tot = p.completionTime != null ? (p.completionTime - p.arrivalTime).toFixed(1) : 'in OPD';
+    const tag = sim.mode === 'current' ? 'walk-in' : kind === 'booked' ? 'booked ' + (p.tokenLabel || '') : (kind === 'pin' ? 'walk-in PIN ' : 'walk-in no-PIN ') + (p.tokenLabel || '');
+    return `<tr><td>${lbl} <span class="n">(${tag.trim()}, arr ${formatClock(p.arrivalTime)})</span></td>${cell(p.regWaitTime, skReg, 1)}${cell(p.triageWaitTime || 0, skTri, 1)}${cell(p.vitalsWaitTime, 0, 1)}${cell(p.consultWaitTime, 0, 1)}${cell(p.pharmWaitTime, 0, 1)}${cell(p.standingTime, 0, 0)}<td class="tot">${tot}</td></tr>`;
+  };
+
+  const arr = sim => sim.patients.filter(p => p.state !== 'NOT_ARRIVED');
+  const c = arr(simCurrent), p = arr(simProposed);
+  const w = p.filter(x => !x.isAppt);
+
+  body.innerHTML =
+    '<tr class="grp c"><td colspan="8">Back Wing · Today (All Walk-In)</td></tr>' +
+    row('Everyone (100% walk-in)', c, 'current', 'walk') +
+    '<tr class="grp p"><td colspan="8">Front Wing · Proposed System</td></tr>' +
+    row('Pre-Booked Appointments', p.filter(x => x.isAppt), 'proposed', 'booked') +
+    row('Walk-In with PIN (uses Triage)', w.filter(x => x.hasPin), 'proposed', 'pin') +
+    row('Walk-In without PIN (uses Reg)', w.filter(x => !x.hasPin), 'proposed', 'walk') +
+    row('All Proposed Patients', p, 'proposed', 'mixed').replace(/<td class="na">skipped<\/td>/g, '<td class="na">–</td>') +
+    '<tr class="grp k"><td colspan="8">Tracked Individuals Across Both Wings</td></tr>' +
+    personRow(followName, simCurrent, followId) +
+    personRow(followName, simProposed, followId) +
+    personRow('Jeevan', simCurrent, jeevanId) +
+    personRow('Jeevan', simProposed, jeevanId);
+}
+
+let lastTableTick = -99;
+function updateDashboardUI(forceTable = false) {
+  document.getElementById('clockDisplay').textContent = formatClock(simTime);
+  const pct = Math.min(100, Math.round((simTime / SIM_DURATION_MAX) * 100));
+  document.getElementById('clockProgressBar').style.width = `${pct}%`;
+
+  const stCur = computeStats(simCurrent);
+  const stProp = computeStats(simProposed);
+
+  document.getElementById('curActiveCount').textContent = stCur.activeCount;
+  document.getElementById('curDoneCount').textContent = stCur.doneCount;
+  document.getElementById('propActiveCount').textContent = stProp.activeCount;
+  document.getElementById('propDoneCount').textContent = stProp.doneCount;
+
+  const scaleBar = val => `${Math.min(100, Math.max(3, (val / 45) * 100))}%`;
+  document.getElementById('barLblRegCur').textContent = `${stCur.avgRegWait.toFixed(1)}m`;
+  document.getElementById('barLblRegWalk').textContent = `${stProp.avgRegWaitWalkNoPin.toFixed(1)}m`;
+  document.getElementById('barRegCur').style.width = scaleBar(stCur.avgRegWait);
+  document.getElementById('barRegWalk').style.width = scaleBar(stProp.avgRegWaitWalkNoPin);
+
+  document.getElementById('barLblVitCur').textContent = `${stCur.avgVitWait.toFixed(1)}m`;
+  document.getElementById('barLblVitWalk').textContent = `${stProp.avgVitWaitWalk.toFixed(1)}m`;
+  document.getElementById('barLblVitAppt').textContent = `${stProp.avgVitWaitAppt.toFixed(1)}m`;
+  document.getElementById('barVitCur').style.width = scaleBar(stCur.avgVitWait);
+  document.getElementById('barVitWalk').style.width = scaleBar(stProp.avgVitWaitWalk);
+  document.getElementById('barVitAppt').style.width = scaleBar(stProp.avgVitWaitAppt);
+
+  document.getElementById('barLblConCur').textContent = `${stCur.avgConWait.toFixed(1)}m`;
+  document.getElementById('barLblConProp').textContent = `${stProp.avgConWait.toFixed(1)}m`;
+  document.getElementById('barConCur').style.width = scaleBar(stCur.avgConWait);
+  document.getElementById('barConProp').style.width = scaleBar(stProp.avgConWait);
+
+  document.getElementById('barLblPharmCur').textContent = `${stCur.avgPharmWait.toFixed(1)}m`;
+  document.getElementById('barLblPharmProp').textContent = `${stProp.avgPharmWait.toFixed(1)}m`;
+  document.getElementById('barPharmCur').style.width = scaleBar(stCur.avgPharmWait);
+  document.getElementById('barPharmProp').style.width = scaleBar(stProp.avgPharmWait);
+
+  const cCon = simCurrent.deptState[0].consultQueue.length + simCurrent.deptState[1].consultQueue.length;
+  const pConAll = [...simProposed.deptState[0].consultQueue, ...simProposed.deptState[1].consultQueue];
+  const pConSeated = pConAll.filter(q => q.seatSlot !== null && q.seatSlot >= 0).length;
+  const pConOverflow = pConAll.length - pConSeated;
+  const cStand = simCurrent.regQueue.length + simCurrent.deptState[0].vitalsQueueSingle.length + simCurrent.deptState[1].vitalsQueueSingle.length + cCon + simCurrent.pharmQueue.length;
+  const pStand = simProposed.regQueue.length + simProposed.triageQueue.length + simProposed.deptState[0].vitalsQueueAppt.length + simProposed.deptState[1].vitalsQueueAppt.length + simProposed.deptState[0].vitalsQueueWalk.length + simProposed.deptState[1].vitalsQueueWalk.length + simProposed.pharmQueue.length + pConOverflow;
+
+  document.getElementById('storyCur').textContent = `${cStand} patients standing in queues (${simCurrent.regQueue.length} at Registration, ${cCon} crowding the consultation doors).`;
+  document.getElementById('storyProp').textContent = `${pStand} patients standing, ${pConSeated} seated in persistent lounge chairs.`;
+  document.getElementById('followName').textContent = followName;
+  document.getElementById('followCur').textContent = describePerson(simCurrent, followId, followName);
+  document.getElementById('followProp').textContent = describePerson(simProposed, followId, followName);
+  document.getElementById('jeevanCur').textContent = describePerson(simCurrent, jeevanId, 'Jeevan');
+  document.getElementById('jeevanProp').textContent = describePerson(simProposed, jeevanId, 'Jeevan');
+
+  if (simTime > 25 && stCur.avgStanding > 1) {
+    const pct = Math.round((1 - stProp.avgStanding / stCur.avgStanding) * 100);
+    document.getElementById('headline').textContent =
+      `Same patients, same staff: physical standing time drops ${pct}% (${stCur.avgStanding.toFixed(1)}m → ${stProp.avgStanding.toFixed(1)}m)`;
+    document.getElementById('executiveInsightText').innerHTML =
+      `Peak Registration queue drops from <b>${simCurrent.peakRegQueue}</b> to <b>${simProposed.peakRegQueue}</b>. ` +
+      `Non-PIN walk-ins wait <b>${stProp.avgRegWaitWalkNoPin.toFixed(1)}m</b> at Registration vs <b>${stCur.avgRegWait.toFixed(1)}m</b> today. ` +
+      `Pre-booked patients stand only <b>${stProp.avgStandingAppt.toFixed(1)}m</b> across their entire hospital visit.`;
+  }
+
+  const lessonEl = document.getElementById('lesson');
+  if (simTime < 35) {
+    lessonEl.textContent = 'Morning Surge (07:30–08:05 AM): Early walk-ins fill the first 15 minutes of doctor capacity (#A1–#A6) so doctors never wait idle, while booked patients begin arriving smoothly 15 minutes ahead of their reserved slots.';
+  } else if (simTime < 100) {
+    lessonEl.textContent = 'Mid-Morning: Watch the Consultation lounges (Zone 3). Each patient in the Proposed wing claims a persistent chair until their token is called—no standing crowd at the door and no shifting between seats.';
+  } else if (simTime < SIM_DURATION_MAX) {
+    lessonEl.textContent = 'Late Morning: Pre-booked patients (like Jeevan) bypass Registration along the blue express lane, pass Vitals, and enter consultation on schedule.';
+  } else {
+    lessonEl.textContent = 'Morning Session Complete (01:30 PM): Compare the final checkpoint waits below across Booked, Walk-In with PIN, and Walk-In without PIN cohorts.';
+  }
+
+  if (forceTable || Math.abs(tickN - lastTableTick) >= 5) {
+    renderWaitTable();
+    lastTableTick = tickN;
+  }
+}
+
+// ============================================================================
+// 4. CONTROLS, PRESETS & 60 FPS ANIMATION LOOP
+// ============================================================================
+let tickN = 0, tickAcc = 0;
+const TICK = 0.1;
+
+function resetSimulations() {
+  simTime = 0; tickN = 0; tickAcc = 0; lastTableTick = -99;
+  simCurrent.reset();
+  simProposed.reset();
+  pickDefaultCharacters();
+  buildHospitalArchitecture();
+  syncAvatars3D(simCurrent, false);
+  syncAvatars3D(simProposed, true);
+  followAnchorInitialized = false;
+  document.getElementById('headline').textContent =
+    'Same patients, same staff — 3D comparison of Today\'s OPD vs. Proposed Appointment & Token System';
+  updateDashboardUI(true);
+}
+
+document.getElementById('btnPlayPause').addEventListener('click', () => {
+  if (simTime >= SIM_DURATION_MAX) {
+    resetSimulations();
+    isRunning = true;
+  } else {
+    isRunning = !isRunning;
+  }
+  document.getElementById('playPauseText').textContent = isRunning ? 'Pause' : 'Play';
+  document.getElementById('simStatusDot').className = isRunning ? '' : 'paused';
+});
+
+document.getElementById('btnStep').addEventListener('click', () => {
+  const target = Math.min(SIM_DURATION_MAX, simTime + 10);
+  while (simTime < target - 1e-9) {
+    tickN++; simTime = tickN * TICK;
+    simCurrent.step(TICK); simProposed.step(TICK);
+    simCurrent.interpolatePositions(0.45);
+    simProposed.interpolatePositions(0.45);
+  }
+  syncAvatars3D(simCurrent, false);
+  syncAvatars3D(simProposed, true);
+  updateDashboardUI(true);
+});
+
+document.getElementById('btnReset').addEventListener('click', () => {
+  isRunning = true;
+  document.getElementById('playPauseText').textContent = 'Pause';
+  document.getElementById('simStatusDot').className = '';
+  resetSimulations();
+});
+
+document.querySelectorAll('.speed-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    simSpeed = parseFloat(btn.dataset.speed);
+    document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+});
+
+function bindSlider(sliderId, labelId, paramKey, formatFn, shouldReset = false) {
+  const slider = document.getElementById(sliderId);
+  const label = document.getElementById(labelId);
+  slider.addEventListener('input', () => {
+    const val = parseFloat(slider.value);
+    params[paramKey] = paramKey === 'apptRatio' ? val / 100 : val;
+    label.textContent = formatFn(val);
+    if (paramKey === 'apptRatio') {
+      document.getElementById('proposedBannerSplit').textContent = `${val}% Appt`;
+    }
+    if (shouldReset) resetSimulations();
+  });
+}
+
+bindSlider('sliderApptPct', 'valApptPct', 'apptRatio', v => `${v}% Appt / ${100 - v}% Walk-In`, true);
+bindSlider('sliderPatientVol', 'valPatientVol', 'totalPatients', v => `${v} Patients`, true);
+bindSlider('sliderRegTime', 'valRegTime', 'regServiceTime', v => `${v.toFixed(1)} min`, false);
+bindSlider('sliderVitalsTime', 'valVitalsTime', 'vitalsServiceTime', v => `${v.toFixed(1)} min`, false);
+bindSlider('sliderConsultTime', 'valConsultTime', 'consultServiceTime', v => `${v.toFixed(1)} min`, true);
+bindSlider('sliderPharmTime', 'valPharmTime', 'pharmServiceTime', v => `${v.toFixed(1)} min`, false);
+bindSlider('sliderTriageTime', 'valTriageTime', 'triageServiceTime', v => `${v.toFixed(1)} min`, false);
+
+document.getElementById('sliderPinPct').addEventListener('input', e => {
+  params.pinRatio = (+e.target.value) / 100;
+  document.getElementById('valPinPct').textContent = `${e.target.value}%`;
+  resetSimulations();
+});
+document.getElementById('chkBookedTriage').addEventListener('change', e => {
+  params.bookedViaTriage = e.target.checked;
+  resetSimulations();
+});
+
+const STAFF_LIMITS = { regCounters: [1, 4], vitalsNurses: [1, 3], doctorsPerDept: [1, 4], triageCounters: [1, 3], pharmCounters: [1, 4] };
+document.querySelectorAll('.stepper').forEach(st => {
+  const key = st.dataset.key, out = st.querySelector('output');
+  st.querySelectorAll('button').forEach(btn => btn.addEventListener('click', () => {
+    const [lo, hi] = STAFF_LIMITS[key];
+    params[key] = Math.min(hi, Math.max(lo, params[key] + (+btn.dataset.d)));
+    out.textContent = params[key];
+    resetSimulations();
+  }));
+});
+
+document.querySelectorAll('input[name=vitalsPolicy]').forEach(r => r.addEventListener('change', () => {
+  params.vitalsPolicy = r.value;
+  resetSimulations();
+}));
+
+document.getElementById('presetSelect').addEventListener('change', e => {
+  const val = e.target.value;
+  params.regCounters = 1; params.vitalsNurses = 1; params.doctorsPerDept = 2;
+  params.triageCounters = 1; params.pharmCounters = 2;
+  params.pinRatio = 0.50; params.triageServiceTime = 0.5;
+  params.bookedViaTriage = false; params.vitalsPolicy = 'alternate';
+
+  if (val === 'default') {
+    params.apptRatio = 0.50; params.totalPatients = 160;
+    params.regServiceTime = 2.2; params.vitalsServiceTime = 2.4; params.consultServiceTime = 5.2; params.pharmServiceTime = 3.6;
+  } else if (val === 'heavy_surge') {
+    params.apptRatio = 0.50; params.totalPatients = 220;
+    params.regServiceTime = 2.4; params.vitalsServiceTime = 2.5; params.consultServiceTime = 5.4; params.pharmServiceTime = 4.0;
+  } else if (val === 'high_digital') {
+    params.apptRatio = 0.75; params.totalPatients = 180;
+    params.regServiceTime = 2.2; params.vitalsServiceTime = 2.2; params.consultServiceTime = 5.2; params.pharmServiceTime = 3.6;
+  } else if (val === 'slow_consult') {
+    params.apptRatio = 0.50; params.totalPatients = 160;
+    params.regServiceTime = 2.0; params.vitalsServiceTime = 2.4; params.consultServiceTime = 7.0; params.pharmServiceTime = 3.6;
+  }
+
+  const apptPct = Math.round(params.apptRatio * 100);
+  document.getElementById('sliderApptPct').value = apptPct;
+  document.getElementById('valApptPct').textContent = `${apptPct}% Appt / ${100 - apptPct}% Walk-In`;
+  document.getElementById('proposedBannerSplit').textContent = `${apptPct}% Appt`;
+  document.getElementById('sliderPatientVol').value = params.totalPatients;
+  document.getElementById('valPatientVol').textContent = `${params.totalPatients} Patients`;
+  document.getElementById('sliderRegTime').value = params.regServiceTime;
+  document.getElementById('valRegTime').textContent = `${params.regServiceTime.toFixed(1)} min`;
+  document.getElementById('sliderVitalsTime').value = params.vitalsServiceTime;
+  document.getElementById('valVitalsTime').textContent = `${params.vitalsServiceTime.toFixed(1)} min`;
+  document.getElementById('sliderConsultTime').value = params.consultServiceTime;
+  document.getElementById('valConsultTime').textContent = `${params.consultServiceTime.toFixed(1)} min`;
+  document.getElementById('sliderPharmTime').value = params.pharmServiceTime;
+  document.getElementById('valPharmTime').textContent = `${params.pharmServiceTime.toFixed(1)} min`;
+  document.getElementById('sliderPinPct').value = 50;
+  document.getElementById('valPinPct').textContent = '50%';
+  document.getElementById('sliderTriageTime').value = 0.5;
+  document.getElementById('valTriageTime').textContent = '0.5 min';
+  document.getElementById('chkBookedTriage').checked = false;
+  document.querySelector('input[name=vitalsPolicy][value=alternate]').checked = true;
+  Object.keys(STAFF_LIMITS).forEach(k => {
+    document.getElementById('out_' + k).textContent = params[k];
+  });
+
+  resetSimulations();
+});
+
+function animateLoop(now) {
+  const elapsedSec = Math.min(0.1, (now - lastFrameTime) / 1000);
+  lastFrameTime = now;
+
+  if (isRunning && simTime < SIM_DURATION_MAX) {
+    tickAcc += elapsedSec * 3.2 * simSpeed;
+    while (tickAcc >= TICK && simTime < SIM_DURATION_MAX - 1e-9) {
+      tickAcc -= TICK;
+      tickN++;
+      simTime = tickN * TICK;
+      simCurrent.step(TICK);
+      simProposed.step(TICK);
+    }
+
+    // Smooth 60 FPS frame-rate-independent interpolation
+    const smoothAlpha = 1 - Math.exp(-12 * elapsedSec * Math.min(simSpeed, 4));
+    simCurrent.interpolatePositions(smoothAlpha);
+    simProposed.interpolatePositions(smoothAlpha);
+
+    syncAvatars3D(simCurrent, false);
+    syncAvatars3D(simProposed, true);
+    updateDashboardUI(false);
+
+    if (simTime >= SIM_DURATION_MAX - 1e-9) {
+      isRunning = false;
+      document.getElementById('playPauseText').textContent = 'Replay';
+      document.getElementById('simStatusDot').className = 'paused';
+      updateDashboardUI(true);
+    }
+  }
+
+  // Free-Orbit Character Tracking: moves controls.target + camera delta together so user can orbit/zoom freely!
+  if (activeCameraPreset === 'anitha' || activeCameraPreset === 'jeevan') {
+    const targetId = activeCameraPreset === 'anitha' ? followId : jeevanId;
+    const pProp = simProposed.patients.find(q => q.id === targetId);
+    const pCur = simCurrent.patients.find(q => q.id === targetId);
+    const activeP = (pProp && pProp.state !== 'NOT_ARRIVED' && pProp.state !== 'COMPLETED') ? { p: pProp, prop: true }
+                  : (pCur && pCur.state !== 'NOT_ARRIVED' && pCur.state !== 'COMPLETED') ? { p: pCur, prop: false } : null;
+    if (activeP) {
+      const wx = toWorldX(activeP.p.x);
+      const wz = toWorldZ(activeP.p.y, activeP.prop);
+      const desiredTarget = new THREE.Vector3(wx, 1.2, wz);
+      if (!followAnchorInitialized) {
+        camera.position.set(wx - 7, 20, wz + 22);
+        controls.target.copy(desiredTarget);
+        followAnchorInitialized = true;
+      } else {
+        const delta = desiredTarget.clone().sub(controls.target).multiplyScalar(0.12);
+        controls.target.add(delta);
+        camera.position.add(delta);
+      }
+    }
+  } else if (isTransitioningCam) {
+    camera.position.lerp(camGoalPos, 0.08);
+    controls.target.lerp(camGoalTarget, 0.1);
+    if (camera.position.distanceTo(camGoalPos) < 0.15) {
+      isTransitioningCam = false;
+    }
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+  updateProjectedLabels();
+  requestAnimationFrame(animateLoop);
+}
+
+window.addEventListener('load', () => {
+  resize3D();
+  resetSimulations();
+  lastFrameTime = performance.now();
+  requestAnimationFrame(animateLoop);
+});
+</script>
+</body>
+</html>
